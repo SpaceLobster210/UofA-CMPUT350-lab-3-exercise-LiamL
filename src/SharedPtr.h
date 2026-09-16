@@ -46,10 +46,11 @@ class ControlBlock: public ControlBlockBase {
 
         ~ControlBlock() override { delete managedaddress; };
 
-        T* managedAddress() override { return managedaddress; };
+        void* managedAddress() override { return managedaddress; };
 
     private:
         T* managedaddress;
+        long refcount;
 };
 
 
@@ -57,44 +58,30 @@ class ControlBlock: public ControlBlockBase {
 template <typename T>
 class SharedPtr {
     public:
+
         SharedPtr() {
             stored = nullptr;
             control = nullptr;
         };
 
-        SharedPtr(T* myObj = nullptr) : stored{myObj} {
-            control = &(new ControlBlock<T>(myObj));
+        SharedPtr(T* myObj) : stored{myObj} {
+            control = new ControlBlock<T>(myObj);
         };
 
         ~SharedPtr() {
             decrementControl();
         };
 
-        void decrementControl() {
-            if (control != nullptr) {
-                control->decrement();
-                if (control->refCount() <= 0) {
-                    delete control;
-                }
-            }
-        }
-
-        void incrementControl() {
-            if (control != nullptr) {
-                control->increment();
-            }
-        }
-
         //Copy Constructor
-        SharedPtr(const SharedPtr& other) {
-            decrementControl();
-            stored = other.get();
-            control = other.getControl();
+        SharedPtr(const SharedPtr& other) : stored(other.get()), control(other.getControl()) {
             incrementControl();
         };
 
         //Copy Assignment Operator
         SharedPtr& operator=(const SharedPtr& other) {
+            if (this == &other) {
+                return *this;
+            }
             decrementControl();
             stored = other.get();
             control = other.getControl();
@@ -103,29 +90,24 @@ class SharedPtr {
         }
 
         //Move Constructor
-        SharedPtr(SharedPtr&& other) {
-            if (other.get() != stored) {
-                reset();
-                stored = other.get();
-            }
-            decrementControl();
-            control = other.getControl();
+        SharedPtr(SharedPtr&& other) : stored(other.get()), control(other.getControl()) {
+            other.reset();
         };
 
         //Move Assignment Operator
         SharedPtr& operator=(SharedPtr&& other) {
             if (other.get() != stored) {
                 reset();
-                stored = other.get();
             }
-            decrementControl();
+            stored = other.get();
             control = other.getControl();
+            other.reset();
             return *this;
         }
 
         T& operator*() const { return *stored; }
 
-        T* operator->() { return stored; }
+        T* operator->() const { return stored; }
 
         T* get() const { return stored; }
 
@@ -137,7 +119,6 @@ class SharedPtr {
 
         void swap(SharedPtr<T>& other) {
             ControlBlockBase* tempCtrl = control;
-            incrementControl();
 
             stored = other.get();
             control = other.getControl();
@@ -147,23 +128,40 @@ class SharedPtr {
         void reset(T* newPtr = nullptr) {
             decrementControl();
             stored = newPtr;
+            control = nullptr;
             if (newPtr != nullptr) {
-                control = &(new ControlBlock<T>(newPtr));
+                control = (new ControlBlock<T>(newPtr));
             }
         }
 
         long useCount() const { return control->refCount(); }
 
         void setPointer(ControlBlockBase* newCtrl) {
+            stored = nullptr;
             if (newCtrl != nullptr) {
-                stored = newCtrl->managedAddress();
+                stored = static_cast<T*>(newCtrl->managedAddress());
             }
-
-            decrementControl();
             control = newCtrl;
         }
 
     private:
+
+        void decrementControl() {
+            if (control != nullptr) {
+                control->decrement();
+                if (control->refCount() <= 0) {
+                    delete control;
+                    control = nullptr;
+                }
+            }
+        }
+
+        void incrementControl() {
+            if (control != nullptr) {
+                control->increment();
+            }
+        }
+
         T* stored;
         ControlBlockBase* control;
 };
